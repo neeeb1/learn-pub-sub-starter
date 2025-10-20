@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -10,8 +11,8 @@ import (
 type SimpleQueueType int
 
 const (
-	durable SimpleQueueType = iota
-	transient
+	durable   SimpleQueueType = iota // 0
+	transient                        // 1
 )
 
 func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType) (*amqp.Channel, amqp.Queue, error) {
@@ -68,6 +69,39 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	if err != nil {
 		return err
 	}
+
+	return nil
+}
+
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	handler func(T),
+) error {
+	amqpCh, newQueue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return err
+	}
+
+	newCh, err := amqpCh.Consume(newQueue.Name, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for msg := range newCh {
+			var data T
+			err = json.Unmarshal(msg.Body, &data)
+			if err != nil {
+				fmt.Println(err)
+			}
+			handler(data)
+			msg.Ack(false)
+		}
+	}()
 
 	return nil
 }

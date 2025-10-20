@@ -5,6 +5,7 @@ import (
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
+	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -40,6 +41,8 @@ func main() {
 	}
 
 	state := gamelogic.NewGameState(username)
+
+	pubsub.SubscribeJSON(rabbitmq, routing.ExchangePerilDirect, fmt.Sprintf("pause.%s", username), routing.PauseKey, 1, handlerPause(state))
 
 replLoop:
 	for {
@@ -78,4 +81,12 @@ replLoop:
 	}
 
 	fmt.Println("exiting peril client... goodbye!")
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(ps routing.PlayingState) {
+		defer fmt.Print("> ")
+
+		gs.HandlePause(ps)
+	}
 }

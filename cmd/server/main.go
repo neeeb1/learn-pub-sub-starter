@@ -29,6 +29,12 @@ func main() {
 		return
 	}
 
+	_, _, err = pubsub.DeclareAndBind(rabbitmq, "peril_topic", "game_logs", "game_logs.*", 0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	err = pubsub.PublishJSON(rabbitCh, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{IsPaused: true})
 	if err != nil {
 		fmt.Println(err)
