@@ -10,17 +10,12 @@ import (
 )
 
 func main() {
-	fmt.Println("Starting Peril client...")
-	const conn_string = "amqp://guest:guest@localhost:5672"
-
-	rabbitmq, err := amqp.Dial(conn_string)
+	rabbitmq, err := dialRabbitMQ()
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-
 	defer rabbitmq.Close()
-	fmt.Println("connection to rabbitmq successful")
 
 	rabbitCh, err := rabbitmq.Channel()
 	if err != nil {
@@ -40,7 +35,8 @@ func main() {
 		routing.ExchangePerilDirect,
 		fmt.Sprintf("pause.%s", username),
 		"pause",
-		1)
+		1,
+	)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -85,12 +81,10 @@ replLoop:
 		switch cmds[0] {
 		case "spawn":
 			err = state.CommandSpawn(cmds)
-
 			if err != nil {
 				fmt.Println(err)
-			} else {
-				fmt.Println("Spawn successful")
 			}
+			fmt.Println("Spawn successful")
 		case "move":
 			move, err := state.CommandMove(cmds)
 			if err != nil {
@@ -138,9 +132,26 @@ func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckTyp
 		defer fmt.Print("> ")
 
 		outcome := gs.HandleMove(move)
-		if outcome == gamelogic.MoveOutComeSafe || outcome == gamelogic.MoveOutcomeMakeWar {
+
+		switch outcome {
+		case gamelogic.MoveOutcomeMakeWar:
+			return pubsub.NackRequeue
+		case gamelogic.MoveOutComeSafe:
 			return pubsub.Ack
+		default:
+			return pubsub.NackDiscard
 		}
-		return pubsub.NackDiscard
 	}
+}
+
+func dialRabbitMQ() (*amqp.Connection, error) {
+	fmt.Println("Starting Peril client...")
+	const conn_string = "amqp://guest:guest@localhost:5672"
+
+	rabbitmq, err := amqp.Dial(conn_string)
+	if err != nil {
+		return rabbitmq, err
+	}
+	fmt.Println("connection to rabbitmq successful")
+	return rabbitmq, nil
 }

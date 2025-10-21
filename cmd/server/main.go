@@ -35,7 +35,8 @@ func main() {
 		return
 	}
 
-	err = pubsub.PublishJSON(rabbitCh,
+	err = pubsub.PublishJSON(
+		rabbitCh,
 		routing.ExchangePerilDirect,
 		routing.PauseKey,
 		routing.PlayingState{IsPaused: true},

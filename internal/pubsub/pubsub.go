@@ -11,8 +11,8 @@ import (
 type SimpleQueueType int
 
 const (
-	durable   SimpleQueueType = iota // 0
-	transient                        // 1
+	Durable   SimpleQueueType = iota // 0
+	Transient                        // 1
 )
 
 type AckType int
@@ -23,7 +23,12 @@ const (
 	NackDiscard                // 2
 )
 
-func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType) (*amqp.Channel, amqp.Queue, error) {
+func DeclareAndBind(conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
 	if err != nil {
 		return ch, amqp.Queue{}, err
@@ -34,7 +39,7 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queu
 	var autoDelete bool
 
 	//Check if queueType is durable (0), or transient (1)
-	if queueType == 0 {
+	if queueType == Durable {
 		durable = true
 	} else {
 		durable = false
@@ -59,7 +64,11 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queu
 
 }
 
-func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
+func PublishJSON[T any](
+	ch *amqp.Channel,
+	exchange, key string,
+	val T,
+) error {
 	data, err := json.Marshal(val)
 	if err != nil {
 		return err
