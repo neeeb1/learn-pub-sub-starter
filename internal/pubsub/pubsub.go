@@ -15,6 +15,14 @@ const (
 	transient                        // 1
 )
 
+type AckType int
+
+const (
+	Ack         AckType = iota // 0
+	NackRequeue                // 1
+	NackDiscard                // 2
+)
+
 func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
 	if err != nil {
@@ -34,7 +42,10 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queu
 		autoDelete = true
 	}
 
-	queue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, nil)
+	table := make(amqp.Table)
+	table["x-dead-letter-exchange"] = "peril_dlx"
+
+	queue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, table)
 	if err != nil {
 		return ch, queue, err
 	}
@@ -78,8 +89,8 @@ func SubscribeJSON[T any](
 	exchange,
 	queueName,
 	key string,
-	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
-	handler func(T),
+	queueType SimpleQueueType, // an "enum" to represent "durable" or "transient"
+	handler func(T) AckType,
 ) error {
 	amqpCh, newQueue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
 	if err != nil {
@@ -98,8 +109,18 @@ func SubscribeJSON[T any](
 			if err != nil {
 				fmt.Println(err)
 			}
-			handler(data)
-			msg.Ack(false)
+			ackType := handler(data)
+			switch ackType {
+			case Ack:
+				msg.Ack(false)
+				fmt.Println("ack'd message")
+			case NackRequeue:
+				msg.Nack(false, true)
+				fmt.Println("nack'd message with requeue")
+			case NackDiscard:
+				msg.Nack(false, false)
+				fmt.Println("nack'd message without requeing")
+			}
 		}
 	}()
 

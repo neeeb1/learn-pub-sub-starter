@@ -9,9 +9,9 @@ import (
 type MoveOutcome int
 
 const (
-	MoveOutcomeSamePlayer MoveOutcome = iota
-	MoveOutComeSafe
-	MoveOutcomeMakeWar
+	MoveOutcomeSamePlayer MoveOutcome = iota // 0
+	MoveOutComeSafe                          // 1
+	MoveOutcomeMakeWar                       // 2
 )
 
 func (gs *GameState) HandleMove(move ArmyMove) MoveOutcome {
