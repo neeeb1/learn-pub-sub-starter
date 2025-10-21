@@ -35,7 +35,11 @@ func main() {
 		return
 	}
 
-	err = pubsub.PublishJSON(rabbitCh, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{IsPaused: true})
+	err = pubsub.PublishJSON(rabbitCh,
+		routing.ExchangePerilDirect,
+		routing.PauseKey,
+		routing.PlayingState{IsPaused: true},
+	)
 	if err != nil {
 		fmt.Println(err)
 		return

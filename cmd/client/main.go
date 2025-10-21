@@ -22,6 +22,12 @@ func main() {
 	defer rabbitmq.Close()
 	fmt.Println("connection to rabbitmq successful")
 
+	rabbitCh, err := rabbitmq.Channel()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		fmt.Println(err)
@@ -31,7 +37,7 @@ func main() {
 
 	_, _, err = pubsub.DeclareAndBind(
 		rabbitmq,
-		"peril_direct",
+		routing.ExchangePerilDirect,
 		fmt.Sprintf("pause.%s", username),
 		"pause",
 		1)
@@ -42,7 +48,35 @@ func main() {
 
 	state := gamelogic.NewGameState(username)
 
-	pubsub.SubscribeJSON(rabbitmq, routing.ExchangePerilDirect, fmt.Sprintf("pause.%s", username), routing.PauseKey, 1, handlerPause(state))
+	pubsub.SubscribeJSON(
+		rabbitmq,
+		routing.ExchangePerilDirect,
+		fmt.Sprintf("pause.%s", username),
+		routing.PauseKey,
+		1,
+		handlerPause(state),
+	)
+
+	_, _, err = pubsub.DeclareAndBind(
+		rabbitmq,
+		routing.ExchangePerilTopic,
+		fmt.Sprintf("army_moves.%s", username),
+		"army_moves.*",
+		1,
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	pubsub.SubscribeJSON(
+		rabbitmq,
+		routing.ExchangePerilTopic,
+		fmt.Sprintf("army_moves.%s", username),
+		"army_moves.*",
+		1,
+		handlerMove(state),
+	)
 
 replLoop:
 	for {
@@ -58,13 +92,20 @@ replLoop:
 				fmt.Println("Spawn successful")
 			}
 		case "move":
-			_, err = state.CommandMove(cmds)
-
+			move, err := state.CommandMove(cmds)
 			if err != nil {
 				fmt.Println(err)
-			} else {
-				fmt.Println("Move successful")
 			}
+
+			pubsub.PublishJSON(
+				rabbitCh,
+				routing.ExchangePerilTopic,
+				fmt.Sprintf("army_moves.%s", username),
+				move,
+			)
+
+			fmt.Println("Move successful")
+
 		case "status":
 			state.CommandStatus()
 		case "help":
@@ -88,5 +129,13 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
 		defer fmt.Print("> ")
 
 		gs.HandlePause(ps)
+	}
+}
+
+func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(move gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+
+		gs.HandleMove(move)
 	}
 }
