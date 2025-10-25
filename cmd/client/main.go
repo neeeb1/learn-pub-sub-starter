@@ -15,6 +15,7 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+
 	defer rabbitmq.Close()
 
 	rabbitCh, err := rabbitmq.Channel()
@@ -28,28 +29,28 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+
 	fmt.Println(username)
+
+	state := gamelogic.NewGameState(username)
 
 	_, _, err = pubsub.DeclareAndBind(
 		rabbitmq,
 		routing.ExchangePerilDirect,
 		fmt.Sprintf("pause.%s", username),
 		"pause",
-		1,
-	)
+		pubsub.Transient)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-
-	state := gamelogic.NewGameState(username)
 
 	pubsub.SubscribeJSON(
 		rabbitmq,
 		routing.ExchangePerilDirect,
 		fmt.Sprintf("pause.%s", username),
 		routing.PauseKey,
-		1,
+		pubsub.Transient,
 		handlerPause(state),
 	)
 
@@ -58,21 +59,50 @@ func main() {
 		routing.ExchangePerilTopic,
 		fmt.Sprintf("army_moves.%s", username),
 		"army_moves.*",
-		1,
+		pubsub.Transient,
 	)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	pubsub.SubscribeJSON(
+	err = pubsub.SubscribeJSON(
 		rabbitmq,
 		routing.ExchangePerilTopic,
-		fmt.Sprintf("army_moves.%s", username),
-		"army_moves.*",
-		1,
-		handlerMove(state),
+		fmt.Sprintf("%s.%s", routing.ArmyMovesPrefix, username),
+		fmt.Sprintf("%s.*", routing.ArmyMovesPrefix),
+		pubsub.Transient,
+		handlerMove(state, rabbitCh),
 	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	_, _, err = pubsub.DeclareAndBind(
+		rabbitmq,
+		routing.ExchangePerilTopic,
+		routing.WarRecognitionsPrefix,
+		fmt.Sprintf("%s.*", routing.WarRecognitionsPrefix),
+		pubsub.Durable,
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	err = pubsub.SubscribeJSON(
+		rabbitmq,
+		routing.ExchangePerilTopic,
+		routing.WarRecognitionsPrefix,
+		fmt.Sprintf("%s.*", routing.WarRecognitionsPrefix),
+		pubsub.Durable,
+		handlerWar(state),
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 replLoop:
 	for {
@@ -83,20 +113,22 @@ replLoop:
 			err = state.CommandSpawn(cmds)
 			if err != nil {
 				fmt.Println(err)
+				continue
 			}
 			fmt.Println("Spawn successful")
+
 		case "move":
 			move, err := state.CommandMove(cmds)
 			if err != nil {
 				fmt.Println(err)
+				continue
 			}
 
 			pubsub.PublishJSON(
 				rabbitCh,
 				routing.ExchangePerilTopic,
 				fmt.Sprintf("army_moves.%s", username),
-				move,
-			)
+				move)
 
 			fmt.Println("Move successful")
 
@@ -127,7 +159,7 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.Ack
 	}
 }
 
-func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckType {
+func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyMove) pubsub.AckType {
 	return func(move gamelogic.ArmyMove) pubsub.AckType {
 		defer fmt.Print("> ")
 
@@ -135,10 +167,52 @@ func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckTyp
 
 		switch outcome {
 		case gamelogic.MoveOutcomeMakeWar:
-			return pubsub.NackRequeue
+			rw := gamelogic.RecognitionOfWar{
+				Attacker: move.Player,
+				Defender: gs.Player,
+			}
+
+			err := pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilTopic,
+				fmt.Sprintf("%s.%s", routing.WarRecognitionsPrefix, gs.Player.Username),
+				rw,
+			)
+			if err != nil {
+				fmt.Println(err)
+				return pubsub.NackRequeue
+			}
+
+			//fmt.Println("publishing:", fmt.Sprintf("%s.%s", routing.WarRecognitionsPrefix, gs.Player.Username))
+
+			return pubsub.Ack
 		case gamelogic.MoveOutComeSafe:
 			return pubsub.Ack
 		default:
+			return pubsub.NackDiscard
+		}
+	}
+}
+
+func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.AckType {
+	return func(rw gamelogic.RecognitionOfWar) pubsub.AckType {
+		defer fmt.Print("> ")
+		outcome, _, _ := gs.HandleWar(rw)
+		//fmt.Println("war received for:", rw.Attacker.Username, "vs", rw.Defender.Username, "outcome:", outcome)
+
+		switch outcome {
+		case gamelogic.WarOutcomeNotInvolved:
+			return pubsub.NackRequeue
+		case gamelogic.WarOutcomeNoUnits:
+			return pubsub.NackDiscard
+		case gamelogic.WarOutcomeOpponentWon:
+			return pubsub.Ack
+		case gamelogic.WarOutcomeYouWon:
+			return pubsub.Ack
+		case gamelogic.WarOutcomeDraw:
+			return pubsub.Ack
+		default:
+			fmt.Println("err unknown WarOutcome")
 			return pubsub.NackDiscard
 		}
 	}
